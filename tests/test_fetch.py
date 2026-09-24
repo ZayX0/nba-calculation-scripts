@@ -103,16 +103,43 @@ def test_fetch_games_stops_at_once_when_blocked(tmp_path):
         )
 
 
-def test_season_game_ids_caches_the_game_list(tmp_path):
-    session = FakeSession(ok("leaguegamelog_2025-26_playoffs.json"))
-    game_ids = fetch.season_game_ids("2025-26", "Playoffs", session=session, data_dir=tmp_path)
-    assert game_ids == ["0042500121", "0042500131", "0042500161", "0042500171"]
+GAMELOG = "leaguegamelog_2025-26_playoffs.json"
+
+
+def test_fetch_gamelog_caches_the_game_list(tmp_path):
+    session = FakeSession(ok(GAMELOG))
+    gamelog = fetch.fetch_gamelog("2025-26", "Playoffs", session=session, data_dir=tmp_path)
+    assert gamelog == fixture_json(GAMELOG)
     assert session.calls[0][1]["SeasonType"] == "Playoffs"
     assert (tmp_path / "raw" / "gamelog" / "2025-26_playoffs.json.gz").exists()
 
 
+def test_season_game_ids_for_the_whole_league_or_some_teams(tmp_path):
+    lines = []
+    session = FakeSession(ok(GAMELOG), ok(GAMELOG))
+    all_ids = fetch.season_game_ids(
+        "2025-26", ["Playoffs"], [], session=session, data_dir=tmp_path, log=lines.append
+    )
+    hou_ids = fetch.season_game_ids(
+        "2025-26", ["Playoffs"], ["HOU"], session=session, data_dir=tmp_path, log=lines.append
+    )
+    assert all_ids == ["0042500121", "0042500131", "0042500161", "0042500171"]
+    assert hou_ids == ["0042500171"]
+    assert lines == ["2025-26 Playoffs: 4 games", "2025-26 Playoffs: 1 game for HOU"]
+
+
+def test_season_game_ids_rejects_a_team_with_no_games(tmp_path):
+    session = FakeSession(ok(GAMELOG))
+    with pytest.raises(
+        ValueError, match=r"no 2025-26 games for HUO\. Teams with games that season: ATL, CLE"
+    ):
+        fetch.season_game_ids(
+            "2025-26", ["Playoffs"], ["HOU", "HUO"], session=session, data_dir=tmp_path, log=lambda line: None
+        )
+
+
 def test_cli_fetches_a_season(tmp_path, capsys):
-    session = FakeSession(ok("leaguegamelog_2025-26_playoffs.json"), *[ok(CDN_GAME)] * 4)
+    session = FakeSession(ok(GAMELOG), *[ok(CDN_GAME)] * 4)
     code = fetch.main(
         ["--season", "2025-26", "--season-type", "Playoffs", "--data-dir", str(tmp_path), "--delay", "0"],
         session=session,
@@ -123,8 +150,43 @@ def test_cli_fetches_a_season(tmp_path, capsys):
     assert "Done: 4 fetched" in out
 
 
+def test_cli_fetches_one_teams_games(tmp_path, capsys):
+    session = FakeSession(ok(GAMELOG), ok(CDN_GAME))
+    argv = [
+        "--season",
+        "2025-2026",
+        "--season-type",
+        "Playoffs",
+        "--team",
+        "hou",
+        "--data-dir",
+        str(tmp_path),
+    ]
+    assert fetch.main(argv, session=session) == 0
+    out = capsys.readouterr().out
+    assert "2025-26 Playoffs: 1 game for HOU" in out
+    assert "0042500171 cdn: fetched" in out
+    assert session.calls[0][1]["Season"] == "2025-26"
+    assert len(session.calls) == 2  # the game list, then HOU's one game
+
+
+def test_cli_reports_an_unknown_team_before_fetching_games(tmp_path, capsys):
+    session = FakeSession(ok(GAMELOG))
+    argv = ["--season", "2025-26", "--season-type", "Playoffs", "--team", "XYZ", "--data-dir", str(tmp_path)]
+    assert fetch.main(argv, session=session) == 1
+    assert "no 2025-26 games for XYZ" in capsys.readouterr().err
+    assert len(session.calls) == 1
+
+
 @pytest.mark.parametrize(
-    "argv", [[], ["123"], ["--season", "2025"], ["--season-type", "Playoffs", "0042500401"]]
+    "argv",
+    [
+        [],
+        ["123"],
+        ["--season", "2025"],
+        ["--season-type", "Playoffs", "0042500401"],
+        ["--team", "HOU", "0042500401"],
+    ],
 )
 def test_cli_rejects_bad_arguments(argv):
     with pytest.raises(SystemExit) as exc:

@@ -101,12 +101,21 @@ def test_stats_final_check_skips_blank_scores():
     assert sources.is_final(sources.STATS, payload)
 
 
-@pytest.mark.parametrize("season", ["2025-26", "1999-00", "1996-97"])
-def test_accepts_season_labels(season):
-    assert sources.validate_season(season) == season
+@pytest.mark.parametrize(
+    "season, label",
+    [
+        ("2025-26", "2025-26"),
+        ("1999-00", "1999-00"),
+        ("1996-97", "1996-97"),
+        ("2025-2026", "2025-26"),
+        ("1999-2000", "1999-00"),
+    ],
+)
+def test_accepts_season_labels(season, label):
+    assert sources.validate_season(season) == label
 
 
-@pytest.mark.parametrize("season", ["2025", "2025-27", "25-26", "2025/26"])
+@pytest.mark.parametrize("season", ["2025", "2025-27", "2025-2027", "25-26", "2025/26", "2025-026"])
 def test_rejects_bad_season_labels(season):
     with pytest.raises(ValueError):
         sources.validate_season(season)
@@ -120,3 +129,15 @@ def test_gamelog_params_reject_unknown_season_type():
 def test_parse_game_ids_deduplicates_team_rows():
     game_ids = sources.parse_game_ids(fixture_json("leaguegamelog_2025-26_playoffs.json"))
     assert game_ids == ["0042500121", "0042500131", "0042500161", "0042500171"]
+
+
+def test_parse_game_ids_filters_by_team():
+    gamelog = fixture_json("leaguegamelog_2025-26_playoffs.json")
+    assert sources.parse_game_ids(gamelog, ["HOU"]) == ["0042500171"]
+    assert sources.parse_game_ids(gamelog, ["HOU", "CLE"]) == ["0042500131", "0042500171"]
+    assert sources.parse_game_ids(gamelog, ["SAS"]) == []
+
+
+def test_gamelog_teams():
+    teams = sources.gamelog_teams(fixture_json("leaguegamelog_2025-26_playoffs.json"))
+    assert teams == ["ATL", "CLE", "DEN", "HOU", "LAL", "TOR"]

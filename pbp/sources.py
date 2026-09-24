@@ -9,6 +9,7 @@ Two NBA.com sources are supported (see "Play-by-play data sources" in CLAUDE.md)
 from __future__ import annotations
 
 import re
+from typing import Iterable
 
 import requests
 
@@ -28,7 +29,7 @@ GAMELOG_URL = "https://stats.nba.com/stats/leaguegamelog"
 SEASON_TYPES = ("Regular Season", "Playoffs", "PlayIn")
 
 _GAME_ID = re.compile(r"^00\d{8}$")
-_SEASON = re.compile(r"^(\d{4})-(\d{2})$")
+_SEASON = re.compile(r"^(\d{4})-(\d{2}|\d{4})$")
 
 
 class BlockedError(RuntimeError):
@@ -101,11 +102,17 @@ def is_final(source: str, payload: dict) -> bool:
 
 
 def validate_season(season: str) -> str:
-    """Return a season label such as 2025-26 if it's well formed, else raise."""
+    """Return a season label in NBA.com's form, such as 2025-26, else raise.
+
+    Accepts 2025-26 or 2025-2026.
+    """
     match = _SEASON.match(season)
-    if not match or (int(match[1]) + 1) % 100 != int(match[2]):
-        raise ValueError(f"not a season label like 2025-26: {season!r}")
-    return season
+    if match:
+        start, end = int(match[1]), match[2]
+        expected = f"{start + 1}" if len(end) == 4 else f"{(start + 1) % 100:02d}"
+        if end == expected:
+            return f"{start}-{(start + 1) % 100:02d}"
+    raise ValueError(f"not a season label like 2025-26 or 2025-2026: {season!r}")
 
 
 def gamelog_params(season: str, season_type: str) -> dict:
@@ -123,8 +130,21 @@ def gamelog_params(season: str, season_type: str) -> dict:
     }
 
 
-def parse_game_ids(gamelog: dict) -> list[str]:
-    """The unique game IDs in a leaguegamelog response, sorted. It has one row per team per game."""
+def parse_game_ids(gamelog: dict, teams: Iterable[str] = ()) -> list[str]:
+    """The unique game IDs in a leaguegamelog response, sorted.
+
+    The response has one row per team per game. If ``teams`` are given (abbreviations such as
+    HOU), only games those teams played in are returned.
+    """
+    teams = set(teams)
     result = gamelog["resultSets"][0]
-    column = result["headers"].index("GAME_ID")
-    return sorted({row[column] for row in result["rowSet"]})
+    game_column = result["headers"].index("GAME_ID")
+    team_column = result["headers"].index("TEAM_ABBREVIATION")
+    return sorted({row[game_column] for row in result["rowSet"] if not teams or row[team_column] in teams})
+
+
+def gamelog_teams(gamelog: dict) -> list[str]:
+    """The abbreviations of the teams in a leaguegamelog response, sorted."""
+    result = gamelog["resultSets"][0]
+    team_column = result["headers"].index("TEAM_ABBREVIATION")
+    return sorted({row[team_column] for row in result["rowSet"]})

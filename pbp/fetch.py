@@ -3,6 +3,7 @@
 Usage:
     python -m pbp.fetch 0042500401 0042500402
     python -m pbp.fetch --season 2025-26 --season-type Playoffs
+    python -m pbp.fetch --season 2025-26 --team HOU
     python -m pbp.fetch --help
 
 Games already in the cache aren't downloaded again unless --refresh is given. Games that
@@ -117,20 +118,57 @@ def fetch_games(
     return results
 
 
-def season_game_ids(
+def fetch_gamelog(
     season: str,
     season_type: str,
     *,
     session: requests.Session,
     data_dir: Path = cache.DEFAULT_DATA_DIR,
     sleep: Callable[[float], None] = time.sleep,
-) -> list[str]:
-    """List a season's played games from stats.nba.com, and cache the raw response."""
+) -> dict:
+    """Download the list of a season's played games from stats.nba.com, and cache it.
+
+    It's downloaded every time, since it grows as the season goes on. Read game IDs out of it
+    with ``sources.parse_game_ids()``.
+    """
     params = sources.gamelog_params(season, season_type)
     response = client.get_with_retries(session, sources.GAMELOG_URL, params=params, sleep=sleep)
     response.raise_for_status()
-    game_ids = sources.parse_game_ids(response.json())
+    gamelog = response.json()
     cache.save(cache.gamelog_path(data_dir, season, season_type), response.content)
+    return gamelog
+
+
+def season_game_ids(
+    season: str,
+    season_types: Iterable[str],
+    teams: Iterable[str],
+    *,
+    session: requests.Session,
+    data_dir: Path = cache.DEFAULT_DATA_DIR,
+    log: Callable[[str], None] = print,
+) -> list[str]:
+    """The IDs of a season's played games of the given types, only for ``teams`` if any are given.
+
+    Raises ValueError if one of the teams played none of those games, which usually means a
+    mistyped abbreviation.
+    """
+    teams = list(teams)
+    game_ids: list[str] = []
+    teams_seen: set[str] = set()
+    for season_type in season_types:
+        gamelog = fetch_gamelog(season, season_type, session=session, data_dir=data_dir)
+        ids = sources.parse_game_ids(gamelog, teams)
+        teams_seen.update(sources.gamelog_teams(gamelog))
+        count = f"{len(ids)} game" + ("" if len(ids) == 1 else "s")
+        log(f"{season} {season_type}: {count}" + (f" for {', '.join(teams)}" if teams else ""))
+        game_ids += ids
+    unknown = [team for team in teams if team not in teams_seen]
+    if unknown:
+        raise ValueError(
+            f"no {season} games for {', '.join(unknown)}. "
+            f"Teams with games that season: {', '.join(sorted(teams_seen)) or 'none'}"
+        )
     return game_ids
 
 
@@ -145,7 +183,13 @@ def main(argv: list[str] | None = None, *, session: requests.Session | None = No
         "--season",
         action="append",
         default=[],
-        help="fetch every played game of a season, e.g. 2025-26 (repeatable)",
+        help="fetch every played game of a season, e.g. 2025-26 or 2025-2026 (repeatable)",
+    )
+    parser.add_argument(
+        "--team",
+        action="append",
+        default=[],
+        help="with --season, only that team's games, by abbreviation, e.g. HOU (repeatable)",
     )
     parser.add_argument(
         "--season-type",
@@ -170,23 +214,24 @@ def main(argv: list[str] | None = None, *, session: requests.Session | None = No
         parser.error("give game IDs or --season")
     if args.season_type and not args.season:
         parser.error("--season-type needs --season")
+    if args.team and not args.season:
+        parser.error("--team needs --season")
     try:
         for game_id in args.game_ids:
             sources.validate_game_id(game_id)
-        for season in args.season:
-            sources.validate_season(season)
+        seasons = [sources.validate_season(season) for season in args.season]
     except ValueError as exc:
         parser.error(str(exc))
+    teams = list(dict.fromkeys(team.upper() for team in args.team))
 
     session = session or client.make_session()
     source = None if args.source == "auto" else args.source
     game_ids = list(args.game_ids)
     try:
-        for season in args.season:
-            for season_type in args.season_type or ["Regular Season"]:
-                ids = season_game_ids(season, season_type, session=session, data_dir=args.data_dir)
-                print(f"{season} {season_type}: {len(ids)} games")
-                game_ids += ids
+        for season in seasons:
+            game_ids += season_game_ids(
+                season, args.season_type or ["Regular Season"], teams, session=session, data_dir=args.data_dir
+            )
         results = fetch_games(
             dict.fromkeys(game_ids),
             session=session,
@@ -195,7 +240,7 @@ def main(argv: list[str] | None = None, *, session: requests.Session | None = No
             refresh=args.refresh,
             delay=args.delay,
         )
-    except (sources.BlockedError, requests.RequestException) as exc:
+    except (sources.BlockedError, requests.RequestException, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

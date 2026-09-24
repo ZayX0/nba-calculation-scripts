@@ -96,12 +96,17 @@ pip install -r requirements.txt
 pytest                                      # all tests; no network needed
 python -m pbp.fetch 0042500401 0029600001   # specific games
 python -m pbp.fetch --season 2025-26        # every played regular-season game (~17 min)
+python -m pbp.fetch --season 2025-2026 --team HOU   # one team's games (~1 min)
 python -m pbp.fetch --season 2025-26 --season-type Playoffs --season-type PlayIn
 python -m pbp.fetch --help                  # --source, --refresh, --delay, --data-dir
 ```
 
-`--season` lists a season's played games with stats.nba.com's `leaguegamelog` endpoint. By
-default, games from 2019-20 onward come from the CDN and older games from stats.nba.com.
+`--season` accepts `2025-26` or `2025-2026` and lists a season's played games with
+stats.nba.com's `leaguegamelog` endpoint. `--team` (repeatable) keeps only games involving those
+teams. It takes the abbreviation the team used that season, such as `NJN` rather than `BKN` for
+2010-11. An abbreviation with no games that season is an error that lists the valid ones, and
+it's raised before any game is downloaded. By default, games from 2019-20 onward come from the
+CDN and older games from stats.nba.com.
 
 ## Play-by-play data sources
 
