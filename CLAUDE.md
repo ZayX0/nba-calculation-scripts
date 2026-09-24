@@ -69,20 +69,39 @@ play-by-play, they're fetched and cached by the data-access code.
 
 ## Current state
 
-The repo only has `LICENSE` so far. There's no code, dependency file, test suite or build command
-yet. When you add the first code, update this file with the real layout and the commands to run
-it and its tests.
+Fetching and caching play-by-play works. Normalizing it into tables and the calculation scripts
+are still to come. Keep this section up to date as the layout and commands change.
 
-Planned layout. Adjust it once real code exists:
+Layout:
 
-- `pbp/`: fetching, caching and normalizing play-by-play data
-- `calculations/`: probability and correlation scripts, one analysis per script
-- `data/`: local cache of raw API responses and normalized tables. Gitignore it and never commit
-  it.
-- `tests/`: tests for parsing and calculations. Use saved JSON fixtures, not live API calls.
+- `pbp/`: fetching and caching play-by-play data. Normalizing will go here too.
+  - `client.py`: the HTTP session that gets through NBA.com's bot filter, plus retries.
+  - `sources.py`: source URLs, which source to use for a game, how to read responses, and
+    whether a game has finished.
+  - `cache.py`: where raw responses are stored, and how to read them back.
+  - `fetch.py`: the command-line entry point, `python -m pbp.fetch`.
+- `calculations/` (not created yet): probability and correlation scripts, one analysis per script.
+- `data/`: the local cache of raw API responses, and later normalized tables. It's gitignored;
+  never commit it.
+- `tests/`: tests that run without the network. `tests/fixtures/` holds real responses saved on
+  2026-09-24, with the play-by-play trimmed to its first and last few events.
 
-Planned stack: Python 3 with `requests`, `pandas`, `numpy` and `scipy`. Add a `requirements.txt`
-or `pyproject.toml` with the first code.
+Stack: Python 3 (tested on 3.11) with `requests`, plus `pytest` for tests (see
+`requirements.txt`). `pandas`, `numpy` and `scipy` are planned for the calculations.
+
+Commands, run from the repo root:
+
+```sh
+pip install -r requirements.txt
+pytest                                      # all tests; no network needed
+python -m pbp.fetch 0042500401 0029600001   # specific games
+python -m pbp.fetch --season 2025-26        # every played regular-season game (~17 min)
+python -m pbp.fetch --season 2025-26 --season-type Playoffs --season-type PlayIn
+python -m pbp.fetch --help                  # --source, --refresh, --delay, --data-dir
+```
+
+`--season` lists a season's played games with stats.nba.com's `leaguegamelog` endpoint. By
+default, games from 2019-20 onward come from the CDN and older games from stats.nba.com.
 
 ## Play-by-play data sources
 
@@ -121,7 +140,8 @@ Both `cdn.nba.com` and `stats.nba.com` sit behind Akamai's bot filter:
 - **In Python, use standard TLS settings with `requests`.** Akamai rejects urllib3's TLS
   settings even when the headers are correct. Mount an `HTTPAdapter` that passes
   `ssl_context=ssl.create_default_context()` in both `init_poolmanager` and
-  `proxy_manager_for`.
+  `proxy_manager_for`. `pbp.client.make_session()` does all of this; use it for any NBA.com
+  request, including the tracking endpoints.
 - **If you use `nba_api` (v1.11.4):** neither endpoint works out of the box. Call
   `set_session()` on `NBAStatsHTTP` and `NBALiveHTTP` with a session built as above. Also pass
   the full header set with `headers=` to the live endpoints, since `nba_api`'s default live
@@ -132,19 +152,34 @@ Both `cdn.nba.com` and `stats.nba.com` sit behind Akamai's bot filter:
 A game that was never played, such as Finals game 6 in a series that ended in five, comes back
 differently from each source:
 
-- The CDN returns **403**, not 404.
+- The CDN returns **403 with an XML body** (`<Code>AccessDenied</Code>`), not 404. A 403 with an
+  HTML "Access Denied" page is the bot filter instead, for existing and missing games alike.
 - stats.nba.com returns **200 with an empty `actions` list**.
 
-Treat both as "no such game", not as an error to retry.
+Treat both as "no such game", not as an error to retry. `pbp/sources.py` handles both, and raises
+`BlockedError` on the bot filter's HTML page.
+
+### Games that haven't finished
+
+The CDN ends a finished game with an `actionType` `game`, `subType` `end` event. stats.nba.com
+has no such event; its last event is the final period's end. So a stats.nba.com game counts as
+finished when its last event is a `period` `end` in period 4 or later and the score isn't tied.
+This was checked on games from 1996-97 to 2025-26, including overtime games. Games that haven't
+finished aren't cached.
 
 ## Conventions for fetching code
 
-- Cache every raw response on disk, for example at `data/raw/{source}/{GAME_ID}.json`, and reuse
-  it. A finished game's play-by-play rarely changes, so fetch each game once.
-- Retry with exponential backoff and pause briefly between requests.
+- Cache every raw response on disk and reuse it. `pbp/cache.py` stores each one byte for byte,
+  gzip-compressed, at `data/raw/{source}/{GAME_ID}.json.gz`, and season game lists at
+  `data/raw/gamelog/{season}_{season_type}.json.gz`. Read them back with `cache.read_json()`.
+  Gzip matters here: a game is about 440 KB uncompressed and 37 KB gzipped, so a season takes
+  about 45 MB instead of 540 MB. A finished game's play-by-play rarely changes, so fetch each game
+  once.
+- Retry timeouts, connection errors and 429 or 5xx responses with exponential backoff. Pause
+  briefly between requests: 0.6 s by default.
 - Keep the raw JSON. Normalize it into one table per game (game, period, clock, team, player,
   action type, score) in a separate step, so the parsing can change without fetching again.
-- Tests use saved JSON fixtures, not live requests.
+- Tests use saved JSON fixtures and a fake session (`tests/fakes.py`), not live requests.
 
 ## Conventions for calculation scripts
 
