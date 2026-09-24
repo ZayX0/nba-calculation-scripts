@@ -1,7 +1,7 @@
 """The on-disk cache of raw API responses under data/raw/.
 
-Each response is stored byte for byte, gzip-compressed: play-by-play is about 440 KB per game
-uncompressed and about 37 KB gzipped, so a regular season takes about 45 MB instead of 540 MB.
+Each response is stored byte for byte, gzip-compressed: play-by-play averages about 430 KB per
+game uncompressed and about 33 KB gzipped, so a regular season takes about 40 MB instead of 530 MB.
 """
 
 from __future__ import annotations
