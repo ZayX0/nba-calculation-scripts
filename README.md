@@ -5,7 +5,7 @@ Scripts for analyzing NBA play-by-play data.
 The repo is built in two stages:
 
 1. **Data access (available now):** a command that downloads play-by-play for NBA games, seasons
-   or single teams from NBA.com, and saves it locally.
+   or single teams from [NBA.com](https://www.nba.com), and saves it locally.
 2. **Calculations (planned):** scripts that work only on the saved data to calculate probability
    and correlation statistics for teams across a season.
 
@@ -17,13 +17,8 @@ the score after each play and more) and saves it on your machine. With it you ca
 - **Fetch specific games** by NBA game ID.
 - **Fetch a whole season:** regular season, playoffs and/or play-in.
 - **Fetch one team's season**, for example `--season 2025-2026 --team HOU`.
-- **Go back to 1996-97.** The data source is chosen automatically:
-
-  | Seasons | Source | Notes |
-  |---|---|---|
-  | 2019-20 onward | NBA's CDN (`cdn.nba.com`) | The richest data: possession, real-world timestamps, court x/y coordinates and play qualifiers |
-  | 1996-97 onward | `stats.nba.com` (PlayByPlayV3) | Used for seasons before 2019-20 |
-
+- **Go back to 1996-97.** Games from 2019-20 onward include extra detail, such as possession,
+  real-world timestamps and court x/y coordinates for each play.
 - **Download each game only once.** Later runs reuse the saved copy unless you pass `--refresh`.
   Games that haven't finished aren't saved, so you never end up with a partial game.
 - **Keep the raw data.** Each response is stored exactly as NBA.com sent it, gzip-compressed, so
@@ -33,7 +28,7 @@ the score after each play and more) and saves it on your machine. With it you ca
 
 - **Python 3.9 or newer.** Tested on 3.9, 3.10, 3.11, 3.12 and 3.13.
 - **Python packages:** `requests`, plus `pytest` to run the tests. Both are in `requirements.txt`.
-- **Internet access** to `cdn.nba.com` and `stats.nba.com`. No API key or account is needed.
+- **Internet access** to [NBA.com](https://www.nba.com). No API key or account is needed.
 - **Disk space:** about 33 KB per game, which is about 40 MB for a full regular season (1,230
   games) or about 3 MB for one team's regular season.
 - **Time:** about 0.8 seconds per game, because the script waits briefly between requests to be
@@ -81,11 +76,13 @@ Example output:
 
 ```text
 2025-26 Regular Season: 82 games for HOU
-[1/82] 0022500001 cdn: fetched (.../data/raw/cdn/0022500001.json.gz)
-[2/82] 0022500012 cdn: fetched (.../data/raw/cdn/0022500012.json.gz)
 ...
 Done: 82 fetched
 ```
+
+In between, each game gets a progress line such as `[1/82] 0022500001 ...: fetched`. A game is
+`fetched` (downloaded), `cached` (already saved), `missing`, `in_progress` or `error`; see
+[Troubleshooting](#troubleshooting) for the last three.
 
 | Option | What it does |
 |---|---|
@@ -93,7 +90,7 @@ Done: 82 fetched
 | `--season 2025-26` | Every played game of a season. `2025-2026` also works. Repeatable. |
 | `--season-type` | With `--season`: `"Regular Season"` (the default), `Playoffs` or `PlayIn`. Repeatable. |
 | `--team HOU` | With `--season`: only games involving that team. Repeatable. |
-| `--source` | `auto` (the default), `cdn` or `stats`, to force a data source. |
+| `--source` | Use a specific NBA.com data source instead of choosing one automatically (see `--help`). |
 | `--refresh` | Download games again even if they're already saved. |
 | `--delay` | Seconds to wait between requests. The default is 0.6. |
 | `--data-dir` | Where to save data. The default is `data/` in the repo. |
@@ -117,17 +114,17 @@ A game ID is 10 digits:
 Downloads are saved under `data/`, which git ignores:
 
 ```text
-data/raw/cdn/{GAME_ID}.json.gz                  # play-by-play, 2019-20 onward
-data/raw/stats/{GAME_ID}.json.gz                # play-by-play, before 2019-20
+data/raw/{source}/{GAME_ID}.json.gz             # play-by-play, one file per game
 data/raw/gamelog/{season}_{season_type}.json.gz # the list of games in a season
 ```
 
 To read a saved game in Python:
 
 ```python
-from pbp import cache
+from pbp import cache, sources
 
-path = cache.pbp_path(cache.DEFAULT_DATA_DIR, "cdn", "0042500401")
+game_id = "0042500401"
+path = cache.pbp_path(cache.DEFAULT_DATA_DIR, sources.default_source(game_id), game_id)
 game = cache.read_json(path)
 for action in game["game"]["actions"][:4]:
     print(action["period"], action["clock"], action["description"])
@@ -145,11 +142,9 @@ for action in game["game"]["actions"][:4]:
 
 ## Troubleshooting
 
-- **`error: cdn.nba.com's bot filter blocked the request`, or stats.nba.com requests time out
-  until the run stops after 3 failures:** NBA.com filters out requests that don't look like
-  they're from a browser. `pbp/client.py` sends the headers and uses the TLS settings that
-  currently get through. If NBA.com changes its filter, those need updating. The
-  "Getting through the NBA's bot filter" section of `CLAUDE.md` explains what's required.
+- **Requests are refused, or time out until the run stops after 3 failures in a row:** check
+  that you can reach [NBA.com](https://www.nba.com). If you can, NBA.com may have changed how it
+  serves this data, and the request settings in `pbp/client.py` may need updating.
 - **SSL certificate errors behind a corporate proxy:** point `SSL_CERT_FILE` and
   `REQUESTS_CA_BUNDLE` at your organization's CA bundle.
 - **`no 2025-26 games for XYZ`:** check the team abbreviation against the list in the error
@@ -163,7 +158,7 @@ for action in game["game"]["actions"][:4]:
 
 ```text
 pbp/
-  client.py    HTTP session that gets past NBA.com's bot filter, plus retries
+  client.py    HTTP session for NBA.com requests, plus retries
   sources.py   data sources, game IDs, reading responses, finished-game check
   cache.py     where downloads are saved, and how to read them back
   fetch.py     the python -m pbp.fetch command
@@ -185,8 +180,9 @@ which data answers each one.
 
 ## Notes
 
-The NBA.com endpoints used here are public but undocumented, and they can change without notice.
-The data belongs to the NBA; check NBA.com's terms of use before redistributing it.
+The data comes from [NBA.com](https://www.nba.com) through public but undocumented endpoints,
+which can change without notice. The data belongs to the NBA; check NBA.com's terms of use before
+redistributing it.
 
 ## License
 
