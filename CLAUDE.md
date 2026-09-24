@@ -16,6 +16,57 @@ Keep these two stages separate. Only the data-access code calls the network. Cal
 read cached or normalized data and must never call an API directly, so their results can be
 reproduced offline.
 
+## Example questions
+
+The calculation scripts should be able to answer questions like these. Under each one is the data
+that answers it, checked against 2025-26 data on 2026-09-24. The NBA.com tracking endpoints named
+below are on `stats.nba.com`, so the bot-filter setup further down applies to them. Like
+play-by-play, they're fetched and cached by the data-access code.
+
+### 1. How often does player X hit their shot when passed the ball by teammate Y?
+
+- **Play-by-play only covers made shots.** A made shot names the passer in `assistPersonId` (CDN
+  data), but a missed shot has no passer field. So play-by-play can count Y's assists to X, but
+  not X's shooting percentage on Y's passes.
+- **For the full answer, use NBA.com's pass tracking:** `stats.nba.com/stats/playerdashptpass`
+  (`PlayerDashPtPass` in `nba_api`). Its "received" table has one row per teammate who passed to
+  the player, with `PASS`, `AST`, `FGM`, `FGA`, `FG_PCT` and 2- and 3-point splits. These are
+  totals for a season or date range, not individual plays.
+
+### 2. How often does an opponent miss their shot when player X is within N feet?
+
+- **Play-by-play can't answer this.** It has no defender positions. The only defensive events it
+  records are blocks (`blockPersonId`) and steals.
+- **Public tracking data only gets close:**
+  - `playerdashptshotdefend` (`PlayerDashPtShotDefend`): opponents' shooting percentage on shots
+    where X was the closest defender, next to those shooters' normal percentage. It's split by
+    the shot's distance from the basket (under 6 ft, under 10 ft, over 15 ft, 2s and 3s), not by
+    how close X was. Pass `team_id=0`; a real team ID returned no rows.
+  - `leaguedashptdefend` (`LeagueDashPtDefend`): the same numbers for every player, one category
+    at a time.
+  - Closest-defender distance ranges (0-2, 2-4, 4-6 and 6+ ft) exist only per shooter
+    (`PlayerDashPtShots`, table `ClosestDefenderShooting`) or per team's opponents
+    (`LeagueDashOppPtShot`). They aren't available for a named defender.
+- An exact "within N feet of player X" needs raw player-tracking coordinates, which aren't
+  public. Any script answering this must say which approximation it uses.
+
+### 3. What teammate combination produces the best plus-minus for the team?
+
+- **Play-by-play can answer this, but you have to rebuild who was on court.** There's no field
+  listing the players on court. Track substitution events (`actionType` `substitution`, with
+  `subType` `in` or `out`). Work out who started each period, since starters aren't listed
+  outside the first period: a player who appears in a period before subbing in started it. A
+  player with no events all period won't show up this way, so check that each team always has
+  exactly five on court.
+- Credit each change in score to the five players each team had on court. Free throws count for
+  the lineup on court when the foul happened, even if substitutions came between the foul and the
+  shots. Then total the results for each 2-, 3-, 4- or 5-man combination.
+- **Compare per 100 possessions (net rating), not raw plus-minus.** The CDN's `possession` field
+  helps count possessions. Set a minimum-minutes threshold, because otherwise the "best" list
+  fills up with combinations that barely played.
+- Check the results against `teamdashlineups` (`TeamDashLineups`, `group_quantity` 2 to 5). It
+  gives NBA.com's official `PLUS_MINUS` and `MIN` for each combination.
+
 ## Current state
 
 The repo only has `LICENSE` so far. There's no code, dependency file, test suite or build command
