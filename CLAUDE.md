@@ -83,10 +83,12 @@ Layout:
 - `calculations/` (not created yet): probability and correlation scripts, one analysis per script.
 - `data/`: the local cache of raw API responses, and later normalized tables. It's gitignored;
   never commit it.
+- `README.md`: the human-facing overview: capabilities, requirements, setup, usage and
+  troubleshooting. Update it when commands, options or requirements change.
 - `tests/`: tests that run without the network. `tests/fixtures/` holds real responses saved on
   2026-09-24, with the play-by-play trimmed to its first and last few events.
 
-Stack: Python 3 (tested on 3.11) with `requests`, plus `pytest` for tests (see
+Stack: Python 3.9 or newer (tested on 3.9 to 3.13) with `requests`, plus `pytest` for tests (see
 `requirements.txt`). `pandas`, `numpy` and `scipy` are planned for the calculations.
 
 Commands, run from the repo root:
@@ -177,9 +179,9 @@ finished aren't cached.
 - Cache every raw response on disk and reuse it. `pbp/cache.py` stores each one byte for byte,
   gzip-compressed, at `data/raw/{source}/{GAME_ID}.json.gz`, and season game lists at
   `data/raw/gamelog/{season}_{season_type}.json.gz`. Read them back with `cache.read_json()`.
-  Gzip matters here: a game is about 440 KB uncompressed and 37 KB gzipped, so a season takes
-  about 45 MB instead of 540 MB. A finished game's play-by-play rarely changes, so fetch each game
-  once.
+  Gzip matters here: a game averages about 430 KB uncompressed and 33 KB gzipped, so a season
+  takes about 40 MB instead of 530 MB. A finished game's play-by-play rarely changes, so fetch
+  each game once.
 - Retry timeouts, connection errors and 429 or 5xx responses with exponential backoff. Pause
   briefly between requests: 0.6 s by default.
 - Keep the raw JSON. Normalize it into one table per game (game, period, clock, team, player,
